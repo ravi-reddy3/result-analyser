@@ -2,15 +2,39 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Selenium Log Analyser</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jupyter Assignment Validator</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <div class="container">
-    <h1>🔍 Selenium Log Analyser</h1>
-    <textarea id="logInput" placeholder="Paste your Selenium failure log here..."></textarea>
-    <button id="analyseBtn">Analyse</button>
-    <div id="result"></div>
+
+    <div class="header">
+      <div class="badge">AI Powered</div>
+      <h1>Jupyter Assignment Validator</h1>
+      <p class="subtitle">Upload your <span class="highlight">.ipynb</span> file and get instant AI-powered code validation</p>
+    </div>
+
+    <div class="card upload-card">
+      <div class="upload-heading">
+        <label>Upload Jupyter Notebook</label>
+        <p class="upload-note">Drop in one <span class="highlight">.ipynb</span> file and run a quick execution check.</p>
+      </div>
+      <div class="upload-row">
+        <div class="file-upload" id="fileUploadArea" onclick="document.getElementById('notebookFile').click()">
+          <input type="file" id="notebookFile" accept=".ipynb" />
+          <div class="upload-icon">&#8679;</div>
+          <div class="upload-copy">
+            <p class="file-hint">Choose your notebook file</p>
+            <p class="file-name" id="fileName">No file selected</p>
+          </div>
+        </div>
+        <button id="validateBtn">&#10003; Validate Assignment</button>
+      </div>
+    </div>
+
+    <div id="result" class="result-box"></div>
+
   </div>
   <script src="app.js"></script>
 </body>

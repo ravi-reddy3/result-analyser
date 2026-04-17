@@ -1,52 +1,94 @@
-document.getElementById('analyseBtn').addEventListener('click', async () => {
-    const logText = document.getElementById('logInput').value;
-    const resultDiv = document.getElementById('result'); // single declaration
+const fileInput = document.getElementById('notebookFile');
+const fileNameEl = document.getElementById('fileName');
+const validateBtn = document.getElementById('validateBtn');
+const resultDiv = document.getElementById('result');
 
-    if (!logText.trim()) {
-        resultDiv.innerHTML = '<p class="error">Please paste a log first.</p>';
+fileInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) {
+        fileNameEl.textContent = file.name;
+        fileNameEl.classList.add('selected');
+    } else {
+        fileNameEl.textContent = 'No file selected';
+        fileNameEl.classList.remove('selected');
+    }
+});
+
+validateBtn.addEventListener('click', async () => {
+    if (!fileInput.files.length) {
+        resultDiv.classList.add('visible');
+        resultDiv.innerHTML = '<p class="error">Please upload a .ipynb file.</p>';
         return;
     }
 
-    resultDiv.innerHTML = '<p class="loading">Analysing... ⏳</p>';
+    resultDiv.classList.add('visible');
+    resultDiv.innerHTML = '<p class="loading">Validating your notebook...</p>';
+    validateBtn.disabled = true;
 
     try {
-        const response = await fetch('/analyze', {
+        const formData = new FormData();
+        formData.append('notebookFile', fileInput.files[0]);
+
+        const response = await fetch('/validate', {
             method: 'POST',
-            headers: { 'Content-Type': 'text/plain' },
-            body: logText,
+            body: formData
         });
 
-        if (!response.ok) {
-            throw new Error(`Server responded with ${response.status}`);
-        }
+        if (!response.ok) throw new Error(`Server responded with ${response.status}`);
 
         const data = await response.json();
+        const a = data.analysis;
 
-        // Add debug log to confirm data structure
-        console.log("Response data:", data);
-        console.log("Is array?", Array.isArray(data.analysis));
-
-        resultDiv.innerHTML = ''; // clear loading message
-
-        if (Array.isArray(data.analysis) && data.analysis.length > 0) {
-            const ul = document.createElement('ul');
-            ul.style.textAlign = 'left';
-            ul.style.lineHeight = '1.8';
-            ul.style.padding = '10px 20px';
-
-            data.analysis.forEach(point => {
-                const li = document.createElement('li');
-                li.textContent = point;
-                ul.appendChild(li);
-            });
-
-            resultDiv.appendChild(ul);
-        } else {
-            resultDiv.innerText = data.analysis || 'No response received.';
+        if (!a || a.raw) {
+            resultDiv.innerHTML = `<p class="error">Could not parse AI response. Raw output:<br><pre style="color:#9090b0;font-size:0.8rem;margin-top:0.5rem;white-space:pre-wrap">${a?.raw || 'No response'}</pre></p>`;
+            return;
         }
 
+        const isExecutable = Boolean(a.executable);
+        const verdictClass = isExecutable ? 'pass' : 'fail';
+        const verdictIcon = isExecutable ? '✓ Executable' : '✗ Not Executable';
+        const reasonText = typeof a.reason === 'string' && a.reason.trim()
+            ? a.reason.trim()
+            : 'No blocking issue was reported.';
+        const reasonPoints = reasonText
+            .split(/\n+|;\s+|(?<=\.)\s+(?=[A-Z])/)
+            .map(point => point.trim())
+            .filter(Boolean);
+        const score = Number.isFinite(Number(a.score)) ? Number(a.score) : 'N/A';
+
+        let html = '';
+
+        // Runtime error banner
+        if (data.hasErrors && data.errorList.length > 0) {
+            html += `<div class="error-banner">
+                ⚠ Runtime errors detected in ${data.errorList.length} cell(s): 
+                ${data.errorList.map(e => `Cell ${e.cell} — ${e.ename}`).join(', ')}
+            </div>`;
+        }
+
+        // Verdict
+        html += `<div class="verdict ${verdictClass}">
+            <div>
+                <div class="verdict-label">${verdictIcon}</div>
+                <div style="color:#6b6b8a;font-size:0.8rem;margin-top:4px">Execution Check</div>
+            </div>
+            <div class="verdict-score">${score}/100</div>
+        </div>`;
+
+        html += `<div class="section-card ${verdictClass}">
+            <div class="section-title">Why</div>
+            <div class="section-status">${isExecutable ? 'Ready to run' : 'Blocking issue found'}</div>
+            <ul class="section-points">
+                ${reasonPoints.map(point => `<li>${point}</li>`).join('')}
+            </ul>
+        </div>`;
+
+        resultDiv.innerHTML = html;
+
     } catch (error) {
-        console.error("Analysis Error:", error);
+        console.error('Validation Error:', error);
         resultDiv.innerHTML = `<p class="error">Error: ${error.message}</p>`;
+    } finally {
+        validateBtn.disabled = false;
     }
 });
