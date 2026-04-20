@@ -3,39 +3,75 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Jupyter Assignment Validator</title>
+  <title>RAG QA Certifier</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div class="container">
-
-    <div class="header">
-      <div class="badge">AI Powered</div>
-      <h1>Jupyter Assignment Validator</h1>
-      <p class="subtitle">Upload your <span class="highlight">.ipynb</span> file and get instant AI-powered code validation</p>
-    </div>
-
-    <div class="card upload-card">
-      <div class="upload-heading">
-        <label>Upload Jupyter Notebook</label>
-        <p class="upload-note">Drop in one <span class="highlight">.ipynb</span> file and run a quick execution check.</p>
+  <div class="shell">
+    <section class="hero card">
+      <div class="hero-copy">
+        <div class="eyebrow">QA Analyst Workspace</div>
+        <h1>Certify Whether Your AI Agent Stayed Grounded in the RAG Docs</h1>
+        <p class="hero-text">
+          Upload the reference documents, paste the user query and the agent response, and get a QA-style verdict with correctness score, hallucination check, and detailed evidence.
+        </p>
       </div>
-      <div class="upload-row">
-        <div class="file-upload" id="fileUploadArea" onclick="document.getElementById('notebookFile').click()">
-          <input type="file" id="notebookFile" accept=".ipynb" />
-          <div class="upload-icon">&#8679;</div>
-          <div class="upload-copy">
-            <p class="file-hint">Choose your notebook file</p>
-            <p class="file-name" id="fileName">No file selected</p>
+      <div class="hero-panel">
+        <div class="hero-metric">
+          <span class="metric-label">Outputs</span>
+          <strong>Certification</strong>
+        </div>
+        <div class="hero-metric">
+          <span class="metric-label">Analysis</span>
+          <strong>Groundedness + Hallucination</strong>
+        </div>
+        <div class="hero-metric">
+          <span class="metric-label">Perspective</span>
+          <strong>Senior QA Analyst</strong>
+        </div>
+      </div>
+    </section>
+
+    <section class="workspace">
+      <form id="evaluationForm" class="card composer">
+        <div class="section-head">
+          <div>
+            <div class="section-kicker">Inputs</div>
+            <h2>Evaluation Intake</h2>
+          </div>
+          <p class="section-note">Upload PDFs or text-based RAG docs such as TXT, MD, CSV, JSON, HTML, XML, YAML, and LOG files.</p>
+        </div>
+
+        <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Upload RAG documents">
+          <input type="file" id="ragDocuments" name="ragDocuments" multiple accept=".pdf,.txt,.md,.markdown,.csv,.json,.jsonl,.html,.htm,.xml,.yml,.yaml,.log,application/pdf,text/*">
+          <div class="dropzone-icon">+</div>
+          <div>
+            <p class="dropzone-title">Upload RAG documents</p>
+            <p class="dropzone-copy">Choose one or more PDFs or reference text files for grounding validation.</p>
           </div>
         </div>
-        <button id="validateBtn">&#10003; Validate Assignment</button>
-      </div>
-    </div>
 
-    <div id="result" class="result-box"></div>
+        <div id="fileList" class="file-list" aria-live="polite"></div>
 
+        <div class="field-grid">
+          <label class="field">
+            <span>User Query</span>
+            <textarea id="agentQuery" name="agentQuery" rows="5" placeholder="Paste the original user question the agent answered."></textarea>
+          </label>
+
+          <label class="field">
+            <span>Agent Response</span>
+            <textarea id="agentResponse" name="agentResponse" rows="8" placeholder="Paste the full response produced by the AI agent."></textarea>
+          </label>
+        </div>
+
+        <button id="evaluateBtn" type="submit">Run QA Certification</button>
+      </form>
+
+      <section id="result" class="card result-box" aria-live="polite"></section>
+    </section>
   </div>
+
   <script src="app.js"></script>
 </body>
 </html>
