@@ -3,13 +3,14 @@ import express from 'express';
 import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
+import XLSX from 'xlsx';
 import { PDFParse } from 'pdf-parse';
 
 const app = express();
 const upload = multer({
     dest: 'uploads/',
     limits: {
-        files: 10,
+        files: 11,
         fileSize: 25 * 1024 * 1024
     }
 });
@@ -30,7 +31,21 @@ const SUPPORTED_EXTENSIONS = new Set([
     '.pdf'
 ]);
 
+const SPREADSHEET_EXTENSIONS = new Set([
+    '.xlsx',
+    '.xls',
+    '.csv'
+]);
+
+const MAX_SHEET_ROWS = 100;
+
 app.use(express.static('public'));
+
+function createHttpError(status, message) {
+    const error = new Error(message);
+    error.status = status;
+    return error;
+}
 
 function extractMessageText(messageContent) {
     if (!messageContent) return '';
@@ -155,6 +170,18 @@ function parseAnalysisResponse(rawText) {
     throw new Error('No JSON object found in AI response.');
 }
 
+function collectUploadedFiles(filesByField) {
+    if (Array.isArray(filesByField)) {
+        return filesByField;
+    }
+
+    if (!filesByField || typeof filesByField !== 'object') {
+        return [];
+    }
+
+    return Object.values(filesByField).flat();
+}
+
 function cleanupUploadedFiles(files) {
     files.forEach(file => {
         try {
@@ -165,11 +192,24 @@ function cleanupUploadedFiles(files) {
     });
 }
 
+function getUploadedFiles(filesByField, fieldName) {
+    if (!filesByField || typeof filesByField !== 'object') {
+        return [];
+    }
+
+    return Array.isArray(filesByField[fieldName]) ? filesByField[fieldName] : [];
+}
+
 function isSupportedDocument(file) {
     const extension = path.extname(file.originalname || '').toLowerCase();
     return extension === '.pdf'
         || SUPPORTED_EXTENSIONS.has(extension)
         || (file.mimetype || '').startsWith('text/');
+}
+
+function isSupportedSpreadsheet(file) {
+    const extension = path.extname(file.originalname || '').toLowerCase();
+    return SPREADSHEET_EXTENSIONS.has(extension);
 }
 
 function normaliseDocumentText(text) {
@@ -298,7 +338,7 @@ async function readDocumentContent(file) {
     return normaliseDocumentText(rawText);
 }
 
-async function buildDocumentBundle(files, searchTerms) {
+async function prepareSupportedDocuments(files) {
     const supportedFiles = [];
     const skippedFiles = [];
 
@@ -337,15 +377,19 @@ async function buildDocumentBundle(files, searchTerms) {
         });
     }
 
-    if (supportedFiles.length === 0) {
-        return { bundledText: '', supportedFiles, skippedFiles };
+    return { supportedFiles, skippedFiles };
+}
+
+function buildDocumentBundle(documents, searchTerms) {
+    if (!documents.length) {
+        return '';
     }
 
     const maxCharsPerDocument = 7000;
     const maxTotalChars = 24000;
     let totalChars = 0;
 
-    const bundledText = supportedFiles
+    return documents
         .map((doc, index) => {
             const remaining = maxTotalChars - totalChars;
             if (remaining <= 0) {
@@ -359,14 +403,97 @@ async function buildDocumentBundle(files, searchTerms) {
             return `Document ${index + 1}: ${doc.name}\n${excerpt}`;
         })
         .join('\n\n---\n\n');
+}
 
-    return { bundledText, supportedFiles, skippedFiles };
+function normaliseHeaderName(value) {
+    return String(value || '')
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, '_');
+}
+
+function parseSpreadsheetRows(file) {
+    if (!isSupportedSpreadsheet(file)) {
+        throw createHttpError(400, 'Upload an Excel or CSV file for the evaluation sheet.');
+    }
+
+    const workbook = XLSX.readFile(file.path, { cellDates: false });
+    const firstSheetName = workbook.SheetNames[0];
+
+    if (!firstSheetName) {
+        throw createHttpError(400, 'The uploaded spreadsheet does not contain any sheets.');
+    }
+
+    const worksheet = workbook.Sheets[firstSheetName];
+    const rows = XLSX.utils.sheet_to_json(worksheet, {
+        header: 1,
+        defval: '',
+        raw: false,
+        blankrows: false
+    });
+
+    if (!rows.length) {
+        throw createHttpError(400, 'The uploaded spreadsheet is empty.');
+    }
+
+    const headerRow = Array.isArray(rows[0]) ? rows[0] : [];
+    const normalisedHeaders = headerRow.map(normaliseHeaderName);
+    const queryIndex = normalisedHeaders.indexOf('query');
+    const responseIndex = normalisedHeaders.indexOf('response');
+
+    if (queryIndex === -1 || responseIndex === -1) {
+        throw createHttpError(400, 'The spreadsheet must contain `query` and `response` columns in the header row.');
+    }
+
+    const records = [];
+    const skippedRows = [];
+
+    for (let index = 1; index < rows.length; index += 1) {
+        const sheetRow = Array.isArray(rows[index]) ? rows[index] : [];
+        const rowNumber = index + 1;
+        const query = String(sheetRow[queryIndex] || '').trim();
+        const response = String(sheetRow[responseIndex] || '').trim();
+
+        if (!query && !response) {
+            continue;
+        }
+
+        if (!query || !response) {
+            skippedRows.push({
+                rowNumber,
+                reason: !query
+                    ? 'Missing query value.'
+                    : 'Missing response value.'
+            });
+            continue;
+        }
+
+        records.push({
+            rowNumber,
+            query,
+            response
+        });
+    }
+
+    if (!records.length) {
+        throw createHttpError(400, 'No valid rows were found. Each row must include both `query` and `response`.');
+    }
+
+    if (records.length > MAX_SHEET_ROWS) {
+        throw createHttpError(400, `The sheet contains ${records.length} valid rows. Please upload ${MAX_SHEET_ROWS} or fewer rows per run.`);
+    }
+
+    return {
+        sheetName: firstSheetName,
+        records,
+        skippedRows
+    };
 }
 
 function buildEvaluationPrompt({ query, agentResponse, ragDocuments }) {
     return `You are a senior QA analyst certifying whether an AI agent answer is accurate and grounded in the provided RAG documents.
 
-Evaluate the AGENT RESPONSE only against the REFERENCE DOCUMENTS.
+Evaluate the AGENT RESPONSE only against the REFERENCE DOCUMENTS and the USER QUERY.
 Do not use outside knowledge.
 If the response contains claims that are unsupported, contradicted, overconfident, or materially incomplete relative to the query, count that against correctness.
 
@@ -419,108 +546,198 @@ REFERENCE DOCUMENTS:
 ${ragDocuments}`;
 }
 
-app.post('/evaluate', upload.array('ragDocuments', 10), async (req, res) => {
-    const uploadedFiles = Array.isArray(req.files) ? req.files : [];
+function toNumberOrNull(value) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+function buildFallbackAnalysis(fullText) {
+    return {
+        certification_status: 'Needs Review',
+        correctness_score: null,
+        groundedness_score: null,
+        hallucination: null,
+        hallucination_risk: 'Medium',
+        summary: 'The QA model returned output that could not be parsed into the expected JSON format.',
+        verdict_reason: 'This row needs manual review because the evaluator response was malformed.',
+        supported_points: [],
+        unsupported_or_incorrect_points: [],
+        missing_points: [],
+        document_coverage: [],
+        recommended_response: '',
+        raw: fullText
+    };
+}
+
+async function analyseRow({ query, response, rowNumber }, documents) {
+    const searchTerms = buildSearchTerms(query, response);
+    const bundledText = buildDocumentBundle(documents, searchTerms);
+
+    const apiResponse = await fetch(process.env.OCI_ENDPOINT, {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${process.env.BEARER_TOKEN}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            model: 'genai.openai.gpt-5.2',
+            stream: false,
+            messages: [
+                {
+                    role: 'system',
+                    content: 'You are a rigorous QA certification assistant for RAG agents. Return only strict JSON.'
+                },
+                {
+                    role: 'user',
+                    content: buildEvaluationPrompt({
+                        query,
+                        agentResponse: response,
+                        ragDocuments: bundledText
+                    })
+                }
+            ]
+        })
+    });
+
+    if (!apiResponse.ok) {
+        const errorText = await apiResponse.text();
+        console.error('API Error:', apiResponse.status, errorText);
+        throw createHttpError(apiResponse.status, `API Error: ${apiResponse.status}`);
+    }
+
+    const responseText = await apiResponse.text();
+    let responseData;
 
     try {
-        const query = (req.body?.agentQuery || '').trim();
-        const agentResponse = (req.body?.agentResponse || '').trim();
+        responseData = JSON.parse(responseText);
+    } catch {
+        responseData = responseText;
+    }
 
-        if (!uploadedFiles.length) {
-            return res.status(400).json({ error: 'Upload at least one RAG document.' });
-        }
+    const fullText = extractAnalysisPayload(responseData);
 
-        if (!query) {
-            return res.status(400).json({ error: 'Enter the agent query.' });
-        }
+    if (!fullText) {
+        throw new Error(`No parsable analysis content returned for row ${rowNumber}.`);
+    }
 
-        if (!agentResponse) {
-            return res.status(400).json({ error: 'Enter the agent response.' });
-        }
+    let analysis;
+    try {
+        analysis = parseAnalysisResponse(fullText);
+    } catch {
+        analysis = buildFallbackAnalysis(fullText);
+    }
 
-        if (!process.env.OCI_ENDPOINT || !process.env.BEARER_TOKEN) {
-            return res.status(500).json({
-                error: 'Missing OCI configuration. Add OCI_ENDPOINT and BEARER_TOKEN to your .env file.'
-            });
-        }
+    return {
+        rowNumber,
+        query,
+        response,
+        analysis
+    };
+}
 
-        const searchTerms = buildSearchTerms(query, agentResponse);
-        const { bundledText, supportedFiles, skippedFiles } = await buildDocumentBundle(uploadedFiles, searchTerms);
+function average(values) {
+    if (!values.length) {
+        return null;
+    }
 
-        if (!supportedFiles.length || !bundledText) {
-            return res.status(400).json({
-                error: 'No supported readable RAG documents were found.',
+    const total = values.reduce((sum, value) => sum + value, 0);
+    return Number((total / values.length).toFixed(1));
+}
+
+function buildBatchSummary(evaluations) {
+    const correctnessScores = evaluations
+        .map(item => toNumberOrNull(item.analysis?.correctness_score))
+        .filter(value => value !== null);
+
+    const groundednessScores = evaluations
+        .map(item => toNumberOrNull(item.analysis?.groundedness_score))
+        .filter(value => value !== null);
+
+    const certifiedCount = evaluations.filter(item => item.analysis?.certification_status === 'Certified').length;
+    const needsReviewCount = evaluations.filter(item => item.analysis?.certification_status === 'Needs Review').length;
+    const notCertifiedCount = evaluations.filter(item => item.analysis?.certification_status === 'Not Certified').length;
+    const hallucinationCount = evaluations.filter(item => item.analysis?.hallucination === true).length;
+    const parseFailureCount = evaluations.filter(item => item.analysis?.raw).length;
+
+    return {
+        totalQuestions: evaluations.length,
+        averageOverallScore: average(correctnessScores),
+        averageGroundednessScore: average(groundednessScores),
+        certifiedCount,
+        needsReviewCount,
+        notCertifiedCount,
+        hallucinationCount,
+        parseFailureCount,
+        certificationRate: evaluations.length
+            ? Number(((certifiedCount / evaluations.length) * 100).toFixed(1))
+            : null
+    };
+}
+
+app.post(
+    '/evaluate',
+    upload.fields([
+        { name: 'ragDocuments', maxCount: 10 },
+        { name: 'evaluationSheet', maxCount: 1 }
+    ]),
+    async (req, res) => {
+        const allUploadedFiles = collectUploadedFiles(req.files);
+
+        try {
+            const ragFiles = getUploadedFiles(req.files, 'ragDocuments');
+            const sheetFile = getUploadedFiles(req.files, 'evaluationSheet')[0];
+
+            if (!ragFiles.length) {
+                return res.status(400).json({ error: 'Upload at least one RAG document.' });
+            }
+
+            if (!sheetFile) {
+                return res.status(400).json({ error: 'Upload an Excel or CSV file that contains `query` and `response` columns.' });
+            }
+
+            if (!process.env.OCI_ENDPOINT || !process.env.BEARER_TOKEN) {
+                return res.status(500).json({
+                    error: 'Missing OCI configuration. Add OCI_ENDPOINT and BEARER_TOKEN to your .env file.'
+                });
+            }
+
+            const { sheetName, records, skippedRows } = parseSpreadsheetRows(sheetFile);
+            const { supportedFiles, skippedFiles } = await prepareSupportedDocuments(ragFiles);
+
+            if (!supportedFiles.length) {
+                return res.status(400).json({
+                    error: 'No supported readable RAG documents were found.',
+                    skippedFiles
+                });
+            }
+
+            const evaluations = [];
+
+            for (const record of records) {
+                const evaluation = await analyseRow(record, supportedFiles);
+                evaluations.push(evaluation);
+            }
+
+            res.json({
+                summary: buildBatchSummary(evaluations),
+                evaluations,
+                sheet: {
+                    fileName: sheetFile.originalname,
+                    sheetName,
+                    skippedRows
+                },
+                documentCount: supportedFiles.length,
+                documentNames: supportedFiles.map(file => file.name),
                 skippedFiles
             });
+        } catch (error) {
+            console.error('Full error:', error);
+            res.status(error.status || 500).json({ error: error.message });
+        } finally {
+            cleanupUploadedFiles(allUploadedFiles);
         }
-
-        const response = await fetch(process.env.OCI_ENDPOINT, {
-            method: 'POST',
-            headers: {
-                Authorization: `Bearer ${process.env.BEARER_TOKEN}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                model: 'genai.openai.gpt-5.2',
-                stream: false,
-                messages: [
-                    {
-                        role: 'system',
-                        content: 'You are a rigorous QA certification assistant for RAG agents. Return only strict JSON.'
-                    },
-                    {
-                        role: 'user',
-                        content: buildEvaluationPrompt({
-                            query,
-                            agentResponse,
-                            ragDocuments: bundledText
-                        })
-                    }
-                ]
-            })
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error('API Error:', response.status, errorText);
-            return res.status(response.status).json({ error: `API Error: ${response.status}` });
-        }
-
-        const responseText = await response.text();
-        let responseData;
-
-        try {
-            responseData = JSON.parse(responseText);
-        } catch {
-            responseData = responseText;
-        }
-
-        const fullText = extractAnalysisPayload(responseData);
-
-        if (!fullText) {
-            throw new Error('AI response did not include parsable content.');
-        }
-
-        let analysis;
-        try {
-            analysis = parseAnalysisResponse(fullText);
-        } catch {
-            analysis = { raw: fullText };
-        }
-
-        res.json({
-            analysis,
-            documentCount: supportedFiles.length,
-            documentNames: supportedFiles.map(file => file.name),
-            skippedFiles
-        });
-    } catch (error) {
-        console.error('Full error:', error);
-        res.status(500).json({ error: error.message });
-    } finally {
-        cleanupUploadedFiles(uploadedFiles);
     }
-});
+);
 
 app.use((error, req, res, next) => {
     console.error('Unhandled error:', error);
@@ -533,7 +750,7 @@ app.use((error, req, res, next) => {
         const message = error.code === 'LIMIT_FILE_SIZE'
             ? 'One of the uploaded files is too large. The current limit is 25 MB per file.'
             : error.code === 'LIMIT_FILE_COUNT'
-                ? 'Too many files were uploaded. The current limit is 10 files per request.'
+                ? 'Too many files were uploaded. The current limit is 10 RAG files plus 1 spreadsheet per request.'
                 : `Upload error: ${error.message}`;
 
         return res.status(400).json({ error: message });

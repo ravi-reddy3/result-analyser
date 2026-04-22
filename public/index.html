@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>RAG QA Certifier</title>
+  <title>RAG Batch QA Certifier</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -11,23 +11,23 @@
     <section class="hero card">
       <div class="hero-copy">
         <div class="eyebrow">QA Analyst Workspace</div>
-        <h1>Certify Whether Your AI Agent Stayed Grounded in the RAG Docs</h1>
+        <h1>Score Every Agent Answer from a Single Excel Upload</h1>
         <p class="hero-text">
-          Upload the reference documents, paste the user query and the agent response, and get a QA-style verdict with correctness score, hallucination check, and detailed evidence.
+          Upload your RAG reference documents plus one spreadsheet with <code>query</code> and <code>response</code> columns. The app will score each question, surface groundedness and hallucination risk, and summarize the batch in one report.
         </p>
       </div>
       <div class="hero-panel">
         <div class="hero-metric">
-          <span class="metric-label">Outputs</span>
-          <strong>Certification</strong>
+          <span class="metric-label">Spreadsheet</span>
+          <strong>Excel or CSV with query + response</strong>
         </div>
         <div class="hero-metric">
-          <span class="metric-label">Analysis</span>
-          <strong>Groundedness + Hallucination</strong>
+          <span class="metric-label">Outputs</span>
+          <strong>Average Scores + Question-Level QA Cards</strong>
         </div>
         <div class="hero-metric">
           <span class="metric-label">Perspective</span>
-          <strong>Senior QA Analyst</strong>
+          <strong>Senior QA Analyst for RAG Agents</strong>
         </div>
       </div>
     </section>
@@ -37,35 +37,50 @@
         <div class="section-head">
           <div>
             <div class="section-kicker">Inputs</div>
-            <h2>Evaluation Intake</h2>
+            <h2>Batch Evaluation Intake</h2>
           </div>
-          <p class="section-note">Upload PDFs or text-based RAG docs such as TXT, MD, CSV, JSON, HTML, XML, YAML, and LOG files.</p>
+          <p class="section-note">Upload reference documents first, then attach the Excel sheet that contains the agent conversations you want scored.</p>
         </div>
 
-        <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Upload RAG documents">
-          <input type="file" id="ragDocuments" name="ragDocuments" multiple accept=".pdf,.txt,.md,.markdown,.csv,.json,.jsonl,.html,.htm,.xml,.yml,.yaml,.log,application/pdf,text/*">
-          <div class="dropzone-icon">+</div>
-          <div>
-            <p class="dropzone-title">Upload RAG documents</p>
-            <p class="dropzone-copy">Choose one or more PDFs or reference text files for grounding validation.</p>
+        <div class="form-stack">
+          <div class="input-cluster">
+            <div class="cluster-copy">
+              <div class="card-label">Reference Documents</div>
+              <p>Upload PDFs or text-based RAG docs such as TXT, MD, CSV, JSON, HTML, XML, YAML, and LOG files.</p>
+            </div>
+
+            <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Upload RAG documents">
+              <input type="file" id="ragDocuments" name="ragDocuments" multiple accept=".pdf,.txt,.md,.markdown,.csv,.json,.jsonl,.html,.htm,.xml,.yml,.yaml,.log,application/pdf,text/*">
+              <div class="dropzone-icon">+</div>
+              <div>
+                <p class="dropzone-title">Upload RAG documents</p>
+                <p class="dropzone-copy">Choose one or more files that the agent should have used for grounding.</p>
+              </div>
+            </div>
+
+            <div id="fileList" class="file-list" aria-live="polite"></div>
+          </div>
+
+          <div class="input-cluster">
+            <div class="cluster-copy">
+              <div class="card-label">Evaluation Sheet</div>
+              <p>Upload one spreadsheet with headers exactly named <code>query</code> and <code>response</code>. Only the first sheet is used.</p>
+            </div>
+
+            <div class="dropzone sheet-dropzone" id="sheetDropzone" tabindex="0" role="button" aria-label="Upload evaluation sheet">
+              <input type="file" id="evaluationSheet" name="evaluationSheet" accept=".xlsx,.xls,.csv">
+              <div class="dropzone-icon">#</div>
+              <div>
+                <p class="dropzone-title">Upload Excel or CSV</p>
+                <p class="dropzone-copy">Supported formats: XLSX, XLS, CSV. Each valid row becomes one QA evaluation.</p>
+              </div>
+            </div>
+
+            <div id="sheetSelection" class="sheet-selection helper-text" aria-live="polite">No evaluation sheet selected yet.</div>
           </div>
         </div>
 
-        <div id="fileList" class="file-list" aria-live="polite"></div>
-
-        <div class="field-grid">
-          <label class="field">
-            <span>User Query</span>
-            <textarea id="agentQuery" name="agentQuery" rows="5" placeholder="Paste the original user question the agent answered."></textarea>
-          </label>
-
-          <label class="field">
-            <span>Agent Response</span>
-            <textarea id="agentResponse" name="agentResponse" rows="8" placeholder="Paste the full response produced by the AI agent."></textarea>
-          </label>
-        </div>
-
-        <button id="evaluateBtn" type="submit">Run QA Certification</button>
+        <button id="evaluateBtn" type="submit">Run Batch QA Certification</button>
       </form>
 
       <section id="result" class="card result-box" aria-live="polite"></section>
